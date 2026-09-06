@@ -36,18 +36,26 @@ class ServiceController extends Controller
         ], 201);
     }
 
-    // GET /services/{service}
-    public function show(Service $service)
+    // GET /services/{id}
+    public function show($id)
     {
-        //Eager load
-        $service->load([
+        $service = Service::with([
             'employees',
             'tickets' => function ($query) {
                 $query->whereDate('queue_date', now()->toDateString());
             },
-        ]);
+        ])->find($id);
 
-        //Validate 
+        //404
+        if (! $service) {
+            return response()->json([
+                'status'  => 404,
+                'message' => 'Service not found.',
+                'data'    => null,
+            ], 404);
+        }
+
+        // closed
         if (! $service->is_open) {
             return response()->json([
                 'status'  => 400,
@@ -64,8 +72,9 @@ class ServiceController extends Controller
     }
 
     //PATCH /services/{id}
-    public function update(UpdateServiceRequest $request, Service $service)
+    public function update(UpdateServiceRequest $request, $id)
     {
+        $service = Service::find($id);
         if (! $service) {
             return response()->json([
                 'status'  => 404,
