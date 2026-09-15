@@ -37,6 +37,7 @@ class ServiceController extends Controller
     }
 
     // GET /services/{id}
+      // GET /services/{id}
     public function show($id)
     {
         $service = Service::with([
@@ -53,15 +54,6 @@ class ServiceController extends Controller
                 'message' => 'Service not found.',
                 'data'    => null,
             ], 404);
-        }
-
-        // closed
-        if (! $service->is_open) {
-            return response()->json([
-                'status'  => 400,
-                'message' => 'This service is currently closed.',
-                'data'    => $service,
-            ], 400);
         }
 
         return response()->json([
