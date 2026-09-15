@@ -6,7 +6,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\Ticket;
 use App\Models\Service;
-use App\Models\ServiceDailyCounter;
 use Carbon\Carbon;
 
 class TicketController extends Controller
@@ -26,7 +25,7 @@ class TicketController extends Controller
             return response()->json(['error' => 'This service is currently closed.'], 400);
         }
 
-               $result = DB::transaction(function () use ($serviceId, $today) {
+        $result = DB::transaction(function () use ($serviceId, $today) {
             // Atomically ensure a counter row exists for this service+day, without racing
             DB::table('service_daily_counters')->insertOrIgnore([
                 'service_id' => $serviceId,
@@ -60,6 +59,7 @@ class TicketController extends Controller
                 'ticket_number' => $nextNumber,
             ];
         });
+
         $peopleAhead = DB::table('tickets')
             ->where('service_id', $serviceId)
             ->where('queue_date', $today)
@@ -120,5 +120,34 @@ class TicketController extends Controller
             'message' => 'Ticket successfully cancelled.',
             'status' => 'CANCELLED',
         ]);
+    }
+
+    // 4. Employee views the waiting list for their service
+    public function waitingList(Request $request, $serviceId)
+    {
+        $service = Service::find($serviceId);
+
+        if (!$service) {
+            return response()->json([
+                'message' => 'Service not found.'
+            ], 404);
+        }
+
+        $tickets = Ticket::where('service_id', $serviceId)
+            ->where('status', 'WAITING')
+            ->orderBy('created_at', 'asc')
+            ->get();
+
+        if ($tickets->isEmpty()) {
+            return response()->json([
+                'message' => 'No one is currently waiting for this service.',
+                'tickets' => []
+            ], 200);
+        }
+
+        return response()->json([
+            'message' => 'Waiting list retrieved successfully.',
+            'tickets' => $tickets
+        ], 200);
     }
 }
