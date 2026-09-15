@@ -26,26 +26,25 @@ class TicketController extends Controller
             return response()->json(['error' => 'This service is currently closed.'], 400);
         }
 
-        $result = DB::transaction(function () use ($serviceId, $today) {
+               $result = DB::transaction(function () use ($serviceId, $today) {
+            // Atomically ensure a counter row exists for this service+day, without racing
+            DB::table('service_daily_counters')->insertOrIgnore([
+                'service_id' => $serviceId,
+                'queue_date' => $today,
+                'last_number' => 0,
+            ]);
+
             $counter = DB::table('service_daily_counters')
                 ->where('service_id', $serviceId)
                 ->where('queue_date', $today)
                 ->lockForUpdate()
                 ->first();
 
-            if (!$counter) {
-                $nextNumber = 1;
-                DB::table('service_daily_counters')->insert([
-                    'service_id' => $serviceId,
-                    'queue_date' => $today,
-                    'last_number' => 1,
-                ]);
-            } else {
-                $nextNumber = $counter->last_number + 1;
-                DB::table('service_daily_counters')
-                    ->where('id', $counter->id)
-                    ->update(['last_number' => $nextNumber]);
-            }
+            $nextNumber = $counter->last_number + 1;
+
+            DB::table('service_daily_counters')
+                ->where('id', $counter->id)
+                ->update(['last_number' => $nextNumber]);
 
             $ticketId = DB::table('tickets')->insertGetId([
                 'service_id' => $serviceId,
@@ -61,7 +60,6 @@ class TicketController extends Controller
                 'ticket_number' => $nextNumber,
             ];
         });
-
         $peopleAhead = DB::table('tickets')
             ->where('service_id', $serviceId)
             ->where('queue_date', $today)
