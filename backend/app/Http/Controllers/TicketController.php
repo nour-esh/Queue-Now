@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers;
 
+
+use App\Services\TicketStateMachine;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\Ticket;
@@ -148,6 +150,78 @@ class TicketController extends Controller
         return response()->json([
             'message' => 'Waiting list retrieved successfully.',
             'tickets' => $tickets
+        ], 200);
+    }
+        // 5. Employee calls the next WAITING ticket for their service
+    public function next(Request $request, TicketStateMachine $stateMachine, $serviceId)
+    {
+        $ticket = DB::transaction(function () use ($serviceId, $stateMachine) {
+            $ticket = Ticket::where('service_id', $serviceId)
+                ->where('status', 'WAITING')
+                ->orderBy('created_at', 'asc')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $ticket) {
+                return null;
+            }
+
+            return $stateMachine->transition($ticket, 'CALLED');
+        });
+
+        if (! $ticket) {
+            return response()->json([
+                'message' => 'No one is currently waiting for this service.',
+            ], 404);
+        }
+
+        return response()->json([
+            'message' => 'Ticket called successfully.',
+            'ticket'  => $ticket,
+        ], 200);
+    }
+
+    // 6. Employee starts serving a called ticket
+    public function start(TicketStateMachine $stateMachine, $id)
+    {
+        return $this->applyTransition($stateMachine, $id, 'SERVING', 'Ticket service started.');
+    }
+
+    // 7. Employee marks a ticket as done
+    public function done(TicketStateMachine $stateMachine, $id)
+    {
+        return $this->applyTransition($stateMachine, $id, 'DONE', 'Ticket completed.');
+    }
+
+    // 8. Employee skips a called ticket
+    public function skip(TicketStateMachine $stateMachine, $id)
+    {
+        return $this->applyTransition($stateMachine, $id, 'SKIPPED', 'Ticket skipped.');
+    }
+
+    /**
+     * Shared helper for start/done/skip: find the ticket, attempt the transition,
+     * and return a consistent response shape.
+     */
+    private function applyTransition(TicketStateMachine $stateMachine, $id, string $toStatus, string $successMessage)
+    {
+        $ticket = Ticket::find($id);
+
+        if (! $ticket) {
+            return response()->json(['error' => 'Ticket not found.'], 404);
+        }
+
+        try {
+            $stateMachine->transition($ticket, $toStatus);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'error' => $e->validator->errors()->first(),
+            ], 409);
+        }
+
+        return response()->json([
+            'message' => $successMessage,
+            'ticket'  => $ticket,
         ], 200);
     }
 }
