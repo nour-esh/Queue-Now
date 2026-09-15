@@ -17,6 +17,11 @@ Route::prefix('v1')->group(function () {
     Route::get('/tickets/{id}', [TicketController::class, 'show']);
     Route::patch('/tickets/{id}/cancel', [TicketController::class, 'cancel']);
 
+    Route::post('/services/{serviceId}/next', [TicketController::class, 'next']);
+    Route::post('/tickets/{id}/start', [TicketController::class, 'start']);
+    Route::post('/tickets/{id}/done', [TicketController::class, 'done']);
+    Route::post('/tickets/{id}/skip', [TicketController::class, 'skip']);
+
 });
 
 Route::get('/user', function (Request $request) {
