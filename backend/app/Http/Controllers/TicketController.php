@@ -8,10 +8,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\Ticket;
 use App\Models\Service;
+use App\Services\AiPredictionService;
 use Carbon\Carbon;
 
 class TicketController extends Controller
 {
+    protected AiPredictionService $aiService;
+
+    public function __construct(AiPredictionService $aiService)
+    {
+        $this->aiService = $aiService;
+    }
     // 1. Take a new ticket
     public function store(Request $request)
     {
@@ -69,12 +76,35 @@ class TicketController extends Controller
             ->where('id', '<', $result['ticket_id'])
             ->count();
 
+        $lastDoneTicket = DB::table('tickets')
+            ->where('service_id', $serviceId)
+            ->where('status', 'DONE')
+            ->latest('updated_at')
+            ->first();
+
+        $previousWaitingTime = 10.0; // default baseline minutes
+        if ($lastDoneTicket && $lastDoneTicket->created_at && $lastDoneTicket->updated_at) {
+            $previousWaitingTime = max(1.0, \Carbon\Carbon::parse($lastDoneTicket->created_at)->diffInMinutes($lastDoneTicket->updated_at));
+        }
+
+        $payload = [
+            'queue_length_before'   => $peopleAhead,
+            'avg_service_time'      => $service->avg_service_time ?? 10.0, 
+            'available_staff'       => 2, // Replace with dynamic staff query if available in your DB
+            'previous_waiting_time' => $previousWaitingTime,
+            'hour'                  => now()->hour,          // Current hour (0-23)
+            'day_of_week'           => now()->dayOfWeek,     // Current day (0-6)
+            'service_type'          => $service->type ?? 'checkup', // Must match: "consultation", "checkup", "lab_test", "payment"
+        ];
+        $estimatedMinutes= $this->aiService->getEstimatedWaitingTime($payload) ?? 15.0;
+
         return response()->json([
             'message' => 'Ticket created successfully!',
             'ticket_id' => $result['ticket_id'],
             'ticket_number' => $result['ticket_number'],
             'status' => 'WAITING',
             'people_ahead' => $peopleAhead,
+            'estimated_waiting_time_minutes' => $estimatedMinutes
         ], 201);
     }
 
