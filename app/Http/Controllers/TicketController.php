@@ -3,124 +3,79 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use App\Models\Ticket;
-use App\Models\Service;
-use App\Models\ServiceDailyCounter;
-use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class TicketController extends Controller
 {
-    // 1. Take a new ticket
+    /**
+     * Store a newly created ticket.
+     */
     public function store(Request $request)
     {
         $request->validate([
             'service_id' => 'required|exists:services,id',
         ]);
 
-        $serviceId = $request->input('service_id');
-        $today = Carbon::today()->toDateString();
-
-        $service = DB::table('services')->where('id', $serviceId)->first();
-        if (!$service || !$service->is_open) {
-            return response()->json(['error' => 'This service is currently closed.'], 400);
-        }
-
-        $result = DB::transaction(function () use ($serviceId, $today) {
-            $counter = DB::table('service_daily_counters')
-                ->where('service_id', $serviceId)
-                ->where('queue_date', $today)
+        return DB::transaction(function () use ($request) {
+            // Lock and calculate next ticket number for the service for today
+            $lastTicket = Ticket::where('service_id', $request->service_id)
+                ->whereDate('created_at', now()->toDateString())
                 ->lockForUpdate()
+                ->latest('id')
                 ->first();
 
-            if (!$counter) {
-                $nextNumber = 1;
-                DB::table('service_daily_counters')->insert([
-                    'service_id' => $serviceId,
-                    'queue_date' => $today,
-                    'last_number' => 1,
-                ]);
-            } else {
-                $nextNumber = $counter->last_number + 1;
-                DB::table('service_daily_counters')
-                    ->where('id', $counter->id)
-                    ->update(['last_number' => $nextNumber]);
-            }
+            $nextNumber = $lastTicket ? $lastTicket->ticket_number + 1 : 1;
 
-            $ticketId = DB::table('tickets')->insertGetId([
-                'service_id' => $serviceId,
+            $ticket = Ticket::create([
+                'service_id' => $request->service_id,
                 'ticket_number' => $nextNumber,
-                'queue_date' => $today,
-                'status' => 'WAITING',
-                'created_at' => now(),
-                'updated_at' => now(),
+                'status' => 'WAITING', // Standardized uppercase status
             ]);
 
-            return [
-                'ticket_id' => $ticketId,
-                'ticket_number' => $nextNumber,
-            ];
+            return response()->json($ticket, 201);
         });
+    }
 
-        $peopleAhead = DB::table('tickets')
-            ->where('service_id', $serviceId)
-            ->where('queue_date', $today)
+    /**
+     * Display the specified ticket status.
+     */
+    public function show($id)
+    {
+        $ticket = Ticket::findOrFail($id);
+
+        $peopleBefore = Ticket::where('service_id', $ticket->service_id)
             ->where('status', 'WAITING')
-            ->where('id', '<', $result['ticket_id'])
+            ->where('id', '<', $ticket->id)
             ->count();
 
         return response()->json([
-            'message' => 'Ticket created successfully!',
-            'ticket_id' => $result['ticket_id'],
-            'ticket_number' => $result['ticket_number'],
-            'status' => 'WAITING',
-            'people_ahead' => $peopleAhead,
-        ], 201);
-    }
-
-    // 2. Patient checks their ticket status
-    public function show($id)
-    {
-        $ticket = DB::table('tickets')->where('id', $id)->first();
-
-        if (!$ticket) {
-            return response()->json(['error' => 'Ticket not found.'], 404);
-        }
-
-        return response()->json([
-            'ticket_id' => $ticket->id,
-            'ticket_number' => $ticket->ticket_number,
-            'status' => $ticket->status,
-            'created_at' => $ticket->created_at,
+            'ticket' => $ticket,
+            'people_before' => $peopleBefore,
         ]);
     }
 
-    // 3. Patient cancels their ticket
+    /**
+     * Cancel an active ticket.
+     */
     public function cancel($id)
     {
-        $ticket = DB::table('tickets')->where('id', $id)->first();
+        $ticket = Ticket::findOrFail($id);
 
-        if (!$ticket) {
-            return response()->json(['error' => 'Ticket not found.'], 404);
-        }
-
-        if ($ticket->status !== 'WAITING') {
+        if (in_array($ticket->status, ['DONE', 'CANCELLED'])) {
             return response()->json([
-                'error' => 'Cannot cancel ticket because it is already called or processed.'
+                'message' => 'Cannot cancel a ticket that is already completed or cancelled.'
             ], 400);
         }
 
-        DB::table('tickets')
-            ->where('id', $id)
-            ->update([
-                'status' => 'CANCELLED',
-                'cancelled_at' => now(),
-                'updated_at' => now(),
-            ]);
+        $ticket->update([
+            'status' => 'CANCELLED',
+            'cancelled_at' => now(), // Standardized timestamp
+        ]);
 
         return response()->json([
-            'message' => 'Ticket successfully cancelled.',
-            'status' => 'CANCELLED',
+            'message' => 'Ticket cancelled successfully',
+            'ticket' => $ticket
         ]);
     }
 }
